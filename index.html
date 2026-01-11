@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Online Chat</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial}
+body{background:#0f1115;color:white;height:100vh;display:flex}
+
+/* Sidebar */
+#sidebar{width:240px;background:#151821;padding:10px;overflow-y:auto}
+h3{margin:8px 0}
+.item{padding:6px;cursor:pointer;font-size:14px}
+.item:hover{background:#1f2430}
+
+/* Chat */
+#chat{flex:1;display:flex;flex-direction:column}
+#messages{flex:1;padding:10px;overflow-y:auto}
+.msg{margin-bottom:6px}
+.name{font-weight:bold}
+.crown::after{content:" 👑"}
+.muted{opacity:.4}
+
+/* Input */
+#input{display:flex;border-top:1px solid #222}
+#input input{flex:1;padding:10px;background:#0f1115;border:none;color:white}
+#input button{background:#5865f2;border:none;color:white;padding:10px}
+
+/* Panels */
+.panel{background:#151821;padding:8px;margin-top:8px}
+.panel input,select{width:100%;margin-top:4px;padding:5px;background:#0f1115;color:white;border:none}
+.panel button{width:100%;margin-top:5px}
+
+/* Rainbow */
+.rainbow{
+  background:linear-gradient(90deg,red,orange,yellow,green,blue,purple);
+  -webkit-background-clip:text;
+  color:transparent;
+}
+
+/* Mobile */
+@media(max-width:768px){
+  #sidebar{display:none}
+}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h3>Kanallar</h3>
+  <div id="channels"></div>
+
+  <div id="adminChannelPanel" class="panel" style="display:none">
+    <input id="newChannel" placeholder="Yeni kanal adı">
+    <button onclick="createChannel()">➕ Kanal Oluştur</button>
+  </div>
+
+  <h3>Kullanıcılar</h3>
+  <div id="users"></div>
+
+  <div class="panel">
+    <input id="newName" placeholder="İsmini değiştir">
+    <button onclick="changeName()">✏️ İsim Değiştir</button>
+  </div>
+</div>
+
+<div id="chat">
+  <div id="messages"></div>
+  <div id="input">
+    <input id="msgInput" placeholder="Mesaj yaz...">
+    <button onclick="sendMessage()">Gönder</button>
+  </div>
+</div>
+
+<div id="adminPanel" class="panel" style="position:fixed;right:10px;bottom:10px;display:none">
+  <b>Admin</b>
+  <div id="selectedUser"></div>
+  <button onclick="giveCrown()">👑 Taç</button>
+  <button onclick="toggleRainbow()">🌈 Rainbow</button>
+  <button onclick="muteUser()">🔇 Mute</button>
+  <button onclick="banUser()">⛔ Ban</button>
+</div>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyB6e4oz3dUalcKrB5qWrLi4KeQ3G7-W7wY",
+  authDomain: "online-chat-65a2a.firebaseapp.com",
+  databaseURL: "https://online-chat-65a2a-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "online-chat-65a2a"
+};
+firebase.initializeApp(firebaseConfig);
+
+const auth=firebase.auth();
+const db=firebase.database();
+
+/* 🔴 KENDİ UID’N */
+const ADMIN_UID="BURAYA_UID";
+
+let myUID,currentChannel="general",selectedUID=null,muted=false;
+
+auth.signInAnonymously().then(r=>{
+  myUID=r.user.uid;
+  db.ref("users/"+myUID).once("value",s=>{
+    if(!s.exists()){
+      db.ref("users/"+myUID).set({
+        name:"Kullanıcı_"+Math.floor(Math.random()*9000),
+        role:myUID===ADMIN_UID?"admin":"user",
+        rainbow:false,
+        muted:false,
+        banned:false
+      });
+    }
+  });
+  db.ref("online/"+myUID).set(true);
+  if(myUID===ADMIN_UID){
+    adminPanel.style.display="block";
+    adminChannelPanel.style.display="block";
+  }
+});
+
+/* ---- Kanallar ---- */
+function createChannel(){
+  const name=newChannel.value;
+  if(!name) return;
+  db.ref("channels/"+name).set(true);
+  newChannel.value="";
+}
+db.ref("channels").on("value",s=>{
+  channels.innerHTML="";
+  s.forEach(c=>{
+    const d=document.createElement("div");
+    d.className="item";
+    d.textContent="# "+c.key;
+    d.onclick=()=>loadChannel(c.key);
+    channels.appendChild(d);
+  });
+});
+function loadChannel(ch){
+  currentChannel=ch;
+  messages.innerHTML="";
+  db.ref("messages/"+ch).off();
+  listenMessages();
+}
+
+/* ---- Mesajlar ---- */
+function listenMessages(){
+db.ref("messages/"+currentChannel).on("child_added",snap=>{
+  const m=snap.val();
+  db.ref("users/"+m.uid).once("value",u=>{
+    const user=u.val();
+    if(user.banned) return;
+    const d=document.createElement("div");
+    d.className="msg"+(user.muted?" muted":"");
+    const n=document.createElement("span");
+    n.className="name "+(user.role==="admin"?"crown":"")+(user.rainbow?" rainbow":"");
+    n.textContent=user.name+": ";
+    d.appendChild(n);
+    d.append(m.text);
+    messages.appendChild(d);
+    messages.scrollTop=messages.scrollHeight;
+  });
+});
+}
+listenMessages();
+
+function sendMessage(){
+  if(muted||!msgInput.value) return;
+  db.ref("messages/"+currentChannel).push({uid:myUID,text:msgInput.value});
+  msgInput.value="";
+}
+
+/* ---- Kullanıcılar + DM ---- */
+db.ref("online").on("value",s=>{
+  users.innerHTML="";
+  s.forEach(c=>{
+    const uid=c.key;
+    db.ref("users/"+uid).once("value",u=>{
+      const user=u.val();
+      const d=document.createElement("div");
+      d.className="item";
+      d.textContent=user.name;
+      d.onclick=()=>{
+        if(myUID===ADMIN_UID){
+          selectedUID=uid;
+          selectedUser.textContent=user.name;
+        }else{
+          currentChannel="dm_"+[myUID,uid].sort().join("_");
+          messages.innerHTML="";
+          listenMessages();
+        }
+      };
+      users.appendChild(d);
+    });
+  });
+});
+
+/* ---- Profil ---- */
+function changeName(){
+  if(!newName.value) return;
+  db.ref("users/"+myUID+"/name").set(newName.value);
+  newName.value="";
+}
+
+/* ---- Admin ---- */
+function giveCrown(){if(selectedUID)db.ref("users/"+selectedUID+"/role").set("admin")}
+function toggleRainbow(){
+  if(!selectedUID) return;
+  db.ref("users/"+selectedUID+"/rainbow").once("value",s=>{
+    db.ref("users/"+selectedUID+"/rainbow").set(!s.val());
+  });
+}
+function muteUser(){
+  if(!selectedUID) return;
+  db.ref("users/"+selectedUID+"/muted").set(true);
+}
+function banUser(){
+  if(!selectedUID) return;
+  db.ref("users/"+selectedUID+"/banned").set(true);
+  db.ref("online/"+selectedUID).remove();
+}
+db.ref("users/"+myUID+"/muted").on("value",s=>muted=s.val());
+</script>
+
+</body>
+  </html>
